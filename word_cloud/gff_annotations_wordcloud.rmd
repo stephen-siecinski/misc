@@ -1,0 +1,36 @@
+# Wordclouds? 
+
+Just for fun to summarize the transcriptional features
+
+```{r}
+write.table(hip_strain_transcription_final$description, file = paste0(outputs,"wordcloud_out_text.txt"), quote = FALSE,
+            col.names = TRUE, row.names = FALSE, sep = "\t")
+cloud_text <- readLines(paste0(outputs, "wordcloud_out_text.txt"))
+docs <- Corpus(VectorSource(cloud_text))
+inspect(docs)
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+docs <- tm_map(docs, toSpace, "/")
+docs <- tm_map(docs, toSpace, "@")
+docs <- tm_map(docs, toSpace, "&")
+docs <- tm_map(docs, toSpace, "%")
+docs <- tm_map(docs, toSpace, "\\|")
+# Convert the text to lower case
+docs <- tm_map(docs, content_transformer(tolower))
+# Remove punctuations
+docs <- tm_map(docs, removePunctuation)
+# Eliminate extra white spaces
+docs <- tm_map(docs, stripWhitespace)
+dtm <- TermDocumentMatrix(docs)
+m <- as.matrix(dtm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v) %>% 
+  as_tibble() %>% 
+  filter(!word %in% c("sourcemgi","symbol", "gene", "predicted",
+                        "protein", "domain", "member", "family",
+                      "containing", "subfamily", "riken", "cdna",
+                      "and", "associated", "type", "like", "nacetylgalactosaminyltransferase",
+                      "3baccmgi5141853")) 
+wc <- wordcloud2(data = d[1:500,1:2], size = 0.60, fontFamily = "Arial", shape = "circle",
+           color = "skyblue", backgroundColor = "black")
+saveWidget(wc, "tmp.html", selfcontained = FALSE)
+webshot("tmp.html", "ts_wc.png", delay = 5, vwidth = 700, vheight = 600, zoom = 4)
