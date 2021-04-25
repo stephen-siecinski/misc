@@ -1,0 +1,74 @@
+---
+title: "PubMed Scraper"
+author: "Stephen Siecinski"
+date: "9/11/2020"
+output: html_document
+---
+# Load in packages
+
+```{r message=FALSE}
+library(dplyr)
+library(easyPubMed)
+library(vroom)
+library(janitor)
+library(stringr)
+```
+
+```{r}
+
+pmid_report <- function(x){
+  print(paste("Searching for", x)) 
+  pmid_output <- get_pubmed_ids(paste0(x, my_query), api_key = "") # key removed for github upload
+  if(pmid_output$Count > 0){
+    print(paste("We've got a hit for", pmid_output$Count, "citations"))
+
+    dir.create(paste0(pub_out,x)) 
+    abstract <- fetch_pubmed_data(pmid_output, format = "abstract")
+    pmid_list <- pmid_output$IdList
+    
+    # An overall report on PMIDs for the function as well as the total number of PMID hits for each
+    cat(paste0(x, '\t', pmid_output$Count), 
+        file = paste0(pub_out, "report.txt"), 
+        sep = '\n', append = TRUE)
+    
+    cat(paste0('"PMIDs for "', x), 
+        file = paste0(pub_out, "all_PMIDs.txt"), 
+        sep = '\n', append = TRUE)
+    
+    write.table(pmid_list, file = paste0(pub_out, "all_PMIDs.txt"), append = TRUE, 
+                row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\n")
+    
+    # Data to be placed in SNP-specific folders for convenience 
+    cat(abstract, file = paste0(pub_out, x, "/abstracts for ", x,".txt"), sep = '\n', append = TRUE)
+    
+    write.table(pmid_list, file = paste0(pub_out, x, "/PMIDs for ", x, ".txt"), append = TRUE, 
+                row.names = FALSE, col.names = FALSE, quote = FALSE, sep = "\n")
+    
+    # Keep a log of run search terms
+    write.table(paste0("hit for ",x), 
+                file = paste0(pub_out, "run_variants_hits.txt"), 
+                sep = '\n', append = TRUE,
+                row.names = FALSE, col.names = FALSE, quote = FALSE)
+    
+    # Delay to avoid being shut out by PubMed, anything below 0.35 seems risky. 
+    # Only needed if running without an API key
+    Sys.sleep(0)
+  }
+  if(pmid_output$Count == 0){
+  # Keep a log of run search terms
+  write.table(paste0("no hit for ",x), 
+              file = paste0(pub_out, "run_variants_no_hits.txt"), 
+              sep = '\n', append = FALSE,
+              row.names = FALSE, col.names = FALSE, quote = FALSE)
+  print("No hit")
+  rm(abstract, pmid_list, pmid_output)
+  Sys.sleep(0)
+  }
+}
+```
+# Running the scraper ####
+
+```{r}
+my_query <- " AND ((('plasma' OR 'serum' OR 'central' OR 'csf' OR 'measured') AND 'oxytocin') OR 'social' OR 'autism' OR neuro*)"
+lapply(df$name, pmid_report)
+```
