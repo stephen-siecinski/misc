@@ -1,0 +1,189 @@
+---
+title: "Sankey Graphic"
+author: "Stephen Siecinski"
+date: "2/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo = FALSE}
+library(dplyr)
+library(tidyr)
+library(patchwork)
+library(hrbrthemes)
+library(circlize)
+library(networkD3)
+```
+
+
+# Here's what the metadata looks like
+```{r}
+inputs <- paste0(getwd(), "/inputs/")
+outputs <- paste0(getwd(), "/outputs/")
+load(paste0(inputs, "sub_class_estimates.RData"))
+
+dim(allen_metadata)
+head(allen_metadata, n = 5)
+
+# Needed to summarize the number of cells (rows) for each of the categories I wanted to include in the sankey plot
+
+# Make a connection data frame
+allen_cells <- allen_metadata %>%
+    filter(!is.na(subclass_label)) %>%
+    group_by(subclass_label) %>% count()
+
+# The subbed_allen_metadata used here was just the allen metadata filtered by the sample ID's that I extracted from the expression matrix using my randomized subsampling pipeline. 
+dim(subbed_allen_meta)
+
+final_cells <- subbed_allen_meta %>%
+    filter(!is.na(subclass_label)) %>%
+    group_by(subclass_label) %>% count()
+
+# Using dplyr here, group_by and count to get the number of each subclass label in the two dataframes
+dim(allen_cells)
+dim(final_cells)
+
+head(final_cells, n = 5)
+```
+
+# Setting up the links df 
+you need a row for each source and each destination. Start with all of the cell types included in the metadata file
+
+```{r}
+links <- data.frame(
+  source = c("All Allen Cells", allen_cells$subclass_label) 
+)
+
+# I'll be converting this table into a "long" format, so I need to make a bunch of columns that will eventually be collapsed. There's probably a more elegant way of doing this.
+# I need to add an annotation for "All Allen Cells", which will be the starting node.
+new_cols <- c("source", sprintf("f%02d", seq(1,43)))
+links[,new_cols] <- ""
+links[,1] <- c("All Allen Cells", allen_cells$subclass_label)
+
+# Now telling the df to generate my excluded or included links. This corresponds to
+# the part in the sankey where the connections go from the big list 
+# of cells in the second layer to "included" or "excluded" in the third layer. 
+links <- links %>%
+  rowwise() %>%
+  mutate(f01 = ifelse(source %in% final_cells$subclass_label, 
+                      "Included", "Excluded")) %>%
+  mutate(f02 = ifelse(source %in% final_cells$subclass_label,
+                      "Final Dataset", ""))
+
+head(links, n = 10)
+
+# And now adding the links from "all allen cells" (first layer) to all of the
+# subclass layers in the 2nd layer
+links[1,2:44] <- as.list(allen_cells$subclass_label)
+```
+
+# Convert table to long format
+some clunky renaming going on here lol 
+
+```{r}
+links_long <- links %>%
+  pivot_longer(2:44, names_to = "target") %>%
+  dplyr::select(-target) %>%
+  filter(value != "") %>%
+  rename("target" = "value")
+
+head(links_long, n = 5)
+tail(links_long, n = 5)
+
+# now add the cell count values to the df conditionally
+# this was a little clunky, but it worked! 
+links_long_allen <- links_long %>%
+  filter(source == "All Allen Cells") %>%
+  left_join(allen_cells, by = c("target" = "subclass_label")) %>%
+  rename("value" = "n")
+
+links_long_filter <- links_long %>%
+  filter(target == "Included" | target == "Excluded") %>%
+  left_join(allen_cells, by = c("source" = "subclass_label")) %>%
+  rename("value" = "n")
+
+links_long_final <- links_long %>%
+  filter(target == "Final Dataset") %>%
+  left_join(final_cells, by = c("source" = "subclass_label")) %>%
+  rename("value" = "n")
+
+links_long <- bind_rows(links_long_allen, links_long_filter)
+
+# So now I have the numerical values for each link in the df
+head(links_long, n = 10)
+
+# And in my case, I needed one more link to show the final dataset
+# extending from the included node
+links_long <- links_long %>%
+  add_row(source = "Included", target = "Final Dataset", value = 84729)
+tail(links_long, n = 10)
+
+
+rm(links_long_allen, links_long_filter, links, new_cols, used_cells)
+```
+
+# Create the nodes dataframe 
+
+```{r}
+nodes <- data.frame(
+  name=c(as.character(links_long$source), as.character(links_long$target)) %>% 
+    unique()
+)
+
+# With networkD3, connections are defined using integer indices instead of strings
+links_long$idsource <- match(links_long$source, nodes$name)-1 
+links_long$idtarget <- match(links_long$target, nodes$name)-1
+head(links_long, 5)
+
+```
+
+# Set up the plot
+```{r}
+# Annoyingly, this package requires colors to be defined using this d3.scaleOrdinal() hacky thing
+# I pulled this from the tutorials linked at the start, it uses the viridis scale, which I like. 
+
+color_scale ='d3.scaleOrdinal() .range(["#FDE725FF","#B4DE2CFF","#6DCD59FF","#35B779FF","#1F9E89FF","#26828EFF","#31688EFF","#3E4A89FF","#482878FF","#440154FF"])'
+
+# Time for plotting. Height seemed to be important with a lot of nodes
+# My plot wouldn't render properly (boxes not appearing) until I upped the size
+# of the plot substantially. 
+
+p <- sankeyNetwork(Links = links_long, Nodes = nodes, Source = "idsource",
+              Target = "idtarget", Value = "value", iterations = 10,
+              NodeID = "name", colourScale = color_scale,
+              sinksRight = TRUE, nodeWidth = 60, margin = 10, fontSize = 60, 
+              nodePadding = 35, units = "cells", height = 2000, 
+              width = 4000)
+
+# Did it work? 
+p
+
+# The plot is huge because I made it 2000x4000 pixels, so it looks weird in the little render
+# screen in R studio. No worries, exporting it as an html file and messing with it further there
+
+library(htmlwidgets)
+saveWidget(p, file=paste0(outputs, "sankeycells.html"))
+
+# I initially just had webshot, which is required for gt (a table package), but webshot2 was required to render this sankey plot properly. Annoyingly, webshot2 does not work for gt. 
+
+# Delay is in seconds, it gives the graphic time to render before writing it. Up the number if you 
+# get partial renders. 
+library(webshot2) 
+webshot(paste0(outputs, "sankeycells.html"), delay = 2, 
+        vwidth = 4000, vheight = 2000)
+
+# You can also save it as a png or a pdf. The only issue there is the graphic is not interactive
+# I didn't like how sankey arranged the nodes so I slide them around a bit in the html and then
+# saved the website (in firefox, right click - save). Then ran the webshot again pointing it to
+# that saved website to generate the png. 
+
+webshot(url = paste0(outputs, "sankeyNetwork_2.html"), 
+        file = paste0(outputs, "sankeycells_2.png"),
+        vwidth = 4000, vheight = 2000)
+
+```
+
+```
